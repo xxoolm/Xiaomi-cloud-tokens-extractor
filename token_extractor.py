@@ -2,17 +2,30 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import os
 import random
+import socket
+import sys
+import tempfile
+import threading
 import time
 from getpass import getpass
-from sys import platform
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import requests
 from Crypto.Cipher import ARC4
+from PIL import Image
 
-if platform != "win32":
+if sys.platform != "win32":
     import readline
+
+_LOGGER = logging.getLogger("token_extractor")
+_LOGGER.level = logging.CRITICAL
+handler = logging.StreamHandler(sys.stdout)
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+handler.setFormatter(formatter)
+_LOGGER.addHandler(handler)
 
 
 class XiaomiCloudConnector:
@@ -47,13 +60,14 @@ class XiaomiCloudConnector:
             self._sign = self.to_json(response.text)["_sign"]
         return valid
 
-    def login_step_2(self):
-        url = "https://account.xiaomi.com/pass/serviceLoginAuth2"
-        headers = {
+    def login_step_2(self) -> bool:
+
+        url: str = "https://account.xiaomi.com/pass/serviceLoginAuth2"
+        headers: dict = {
             "User-Agent": self._agent,
             "Content-Type": "application/x-www-form-urlencoded"
         }
-        fields = {
+        fields: dict = {
             "sid": "xiaomiio",
             "hash": hashlib.md5(str.encode(self._password)).hexdigest().upper(),
             "callback": "https://sts.api.io.mi.com/sts",
@@ -62,23 +76,52 @@ class XiaomiCloudConnector:
             "_sign": self._sign,
             "_json": "true"
         }
-        response = self._session.post(url, headers=headers, params=fields)
-        valid = response is not None and response.status_code == 200
+        _LOGGER.debug("login_step_2: URL: %s", url)
+        _LOGGER.debug("login_step_2: Fields: %s", fields)
+
+        response = self._session.post(url, headers=headers, params=fields, allow_redirects=False)
+        _LOGGER.debug("login_step_2: Response text: %s", response.text[:1000])
+
+        valid: bool = response is not None and response.status_code == 200
+
         if valid:
-            json_resp = self.to_json(response.text)
+            json_resp: dict = self.to_json(response.text)
+            if "captchaUrl" in json_resp and json_resp["captchaUrl"] is not None:
+                captcha_code: str = self.handle_captcha(json_resp["captchaUrl"])
+                if not captcha_code:
+                    _LOGGER.debug("Could not solve captcha.")
+                    return False
+                # Add captcha code to the fields and retry
+                fields["captCode"] = captcha_code
+                _LOGGER.debug("Retrying login with captcha.")
+                response = self._session.post(url, headers=headers, params=fields, allow_redirects=False)
+                _LOGGER.debug("login_step_2: Retry Response text: %s", response.text[:1000])
+                if response is not None and response.status_code == 200:
+                    json_resp = self.to_json(response.text)
+                else:
+                    _LOGGER.error("Login failed even after captcha.")
+                    return False
+                if "code" in json_resp and json_resp["code"] == 87001:
+                    print("Invalid captcha.")
+                    return False
+
             valid = "ssecurity" in json_resp and len(str(json_resp["ssecurity"])) > 4
             if valid:
                 self._ssecurity = json_resp["ssecurity"]
-                self.userId = json_resp["userId"]
-                self._cUserId = json_resp["cUserId"]
-                self._passToken = json_resp["passToken"]
-                self._location = json_resp["location"]
-                self._code = json_resp["code"]
+                self.userId = json_resp.get("userId", None)
+                self._cUserId = json_resp.get("cUserId", None)
+                self._passToken = json_resp.get("passToken", None)
+                self._location = json_resp.get("location", None)
+                self._code = json_resp.get("code", None)
             else:
                 if "notificationUrl" in json_resp:
                     print("Two factor authentication required, please use following url and restart extractor:")
                     print(json_resp["notificationUrl"])
                     print()
+                else:
+                    _LOGGER.error("login_step_2: Login failed, server returned: %s", json_resp)
+        else:
+            _LOGGER.error("login_step_2: HTTP status: %s; Response: %s", response.status_code, response.text[:500])
         return valid
 
     def login_step_3(self):
@@ -90,6 +133,42 @@ class XiaomiCloudConnector:
         if response.status_code == 200:
             self._serviceToken = response.cookies.get("serviceToken")
         return response.status_code == 200
+
+
+    def handle_captcha(self, captcha_url: str) -> str:
+
+        # Full URL in case it s relative
+        if captcha_url.startswith("/"):
+            captcha_url = "https://account.xiaomi.com" + captcha_url
+
+        _LOGGER.debug("Downloading captcha image from: %s", captcha_url)
+        response = self._session.get(captcha_url, stream=False)
+        if response.status_code != 200:
+            _LOGGER.error("Unable to fetch captcha image.")
+            return ""
+
+        try:
+            # Try to serve image file
+            start_image_server(response.content)
+            print("Captcha URL: http://localhost:31415")
+        except Exception as e1:
+            _LOGGER.debug(e1)
+            # Save image to a temporary file
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp:
+                tmp.write(response.content)
+                tmp_path: str = tmp.name
+            _LOGGER.info("Captcha image saved at: %s", tmp_path)
+            try:
+                img = Image.open(tmp_path)
+                img.show()
+            except Exception as e2:
+                _LOGGER.debug(e2)
+                print(f"Please open {tmp_path} and solve the captcha.")
+
+        # Ask user for captcha solution
+        captcha_solution: str = input("Enter captcha as shown in the image: ").strip()
+        return captcha_solution
+
 
     def login(self):
         self._session.cookies.set("sdkVersion", "accountsdk-18.8.15", domain="mi.com")
@@ -188,10 +267,8 @@ class XiaomiCloudConnector:
         agent_id = "".join(
             map(lambda i: chr(i), [random.randint(65, 69) for _ in range(13)])
         )
-        a = random.randint(0, 9)
-        b = random.randint(0, 9)
-        c = random.randint(0, 9)
-        return f"Android-7.1.1-{a}.{b}.{c}-ONEPLUS A3011-136-{agent_id} APP/xiaomi.smarthome APPV/62830"
+        random_text = "".join(map(lambda i: chr(i), [random.randint(97, 122) for _ in range(18)]))
+        return f"{random_text}-{agent_id} APP/com.xiaomi.mihome APPV/10.5.201"
 
     @staticmethod
     def generate_device_id():
@@ -251,6 +328,26 @@ def print_tabbed(value, tab):
 def print_entry(key, value, tab):
     if value:
         print_tabbed(f'{key + ":": <10}{value}', tab)
+
+
+def start_image_server(image: bytes) -> None:
+    class ImgHttpHandler(BaseHTTPRequestHandler):
+
+        def do_GET(self) -> None:
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(image)
+
+        def log_message(self, msg, *args) -> None:
+            _LOGGER.debug(msg, *args)
+
+    httpd = HTTPServer(('', 31415), ImgHttpHandler)
+    _LOGGER.info("server address: %s", httpd.server_address)
+    _LOGGER.info("hostname: %s", socket.gethostname())
+
+    thread = threading.Thread(target = httpd.serve_forever)
+    thread.daemon = True
+    thread.start()
 
 
 def main():
@@ -331,3 +428,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# TODO: args
+# TODO: url
