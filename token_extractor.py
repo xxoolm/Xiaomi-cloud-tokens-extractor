@@ -61,6 +61,7 @@ class XiaomiCloudConnector:
         self._serviceToken = None
 
     def login_step_1(self):
+        _LOGGER.debug("login_step_1")
         url = "https://account.xiaomi.com/pass/serviceLogin?sid=xiaomiio&_json=true"
         headers = {
             "User-Agent": self._agent,
@@ -70,13 +71,14 @@ class XiaomiCloudConnector:
             "userId": self._username
         }
         response = self._session.get(url, headers=headers, cookies=cookies)
+        _LOGGER.debug(response.text)
         valid = response.status_code == 200 and "_sign" in self.to_json(response.text)
         if valid:
             self._sign = self.to_json(response.text)["_sign"]
         return valid
 
     def login_step_2(self) -> bool:
-
+        _LOGGER.debug("login_step_2")
         url: str = "https://account.xiaomi.com/pass/serviceLoginAuth2"
         headers: dict = {
             "User-Agent": self._agent,
@@ -95,7 +97,7 @@ class XiaomiCloudConnector:
         _LOGGER.debug("login_step_2: Fields: %s", fields)
 
         response = self._session.post(url, headers=headers, params=fields, allow_redirects=False)
-        _LOGGER.debug("login_step_2: Response text: %s", response.text[:1000])
+        _LOGGER.debug("login_step_2: Response text: %s", response.text)
 
         valid: bool = response is not None and response.status_code == 200
 
@@ -142,11 +144,13 @@ class XiaomiCloudConnector:
         return valid
 
     def login_step_3(self):
+        _LOGGER.debug("login_step_3")
         headers = {
             "User-Agent": self._agent,
             "Content-Type": "application/x-www-form-urlencoded"
         }
         response = self._session.get(self._location, headers=headers)
+        _LOGGER.debug(response.text)
         if response.status_code == 200:
             self._serviceToken = response.cookies.get("serviceToken")
         return response.status_code == 200
