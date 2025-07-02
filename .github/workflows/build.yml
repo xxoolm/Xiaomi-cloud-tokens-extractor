@@ -57,15 +57,24 @@ jobs:
 
   build_exe:
     name: Build exe
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     steps:
       - name: Download repo
-        uses: actions/checkout@v1
+        uses: actions/checkout@v4
 
-      - name: Create token_extractor.exe
-        uses: JackMcKew/pyinstaller-action-windows@main
+      - uses: actions/setup-python@v5
+        name: Setup Python
         with:
-          path: .
+          python-version: '3.13.x'
+
+      - name: Install pyinstaller
+        run: pip3 install -U pyinstaller
+
+      - name: Install dependencies
+        run: pip3 install -r requirements.txt
+
+      - name: Run pyinstaller
+        run: pyinstaller token_extractor.spec
 
       - name: Archive built file
         uses: actions/upload-artifact@v4
