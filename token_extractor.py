@@ -15,7 +15,11 @@ from getpass import getpass
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import requests
-from Crypto.Cipher import ARC4
+
+try:
+    from Crypto.Cipher import ARC4
+except ModuleNotFoundError:
+    from Cryptodome.Cipher import ARC4
 from PIL import Image
 
 if sys.platform != "win32":
