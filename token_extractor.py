@@ -15,7 +15,11 @@ from getpass import getpass
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import requests
-from Crypto.Cipher import ARC4
+
+try:
+    from Crypto.Cipher import ARC4
+except ModuleNotFoundError:
+    from Cryptodome.Cipher import ARC4
 from PIL import Image
 
 if sys.platform != "win32":
@@ -177,7 +181,7 @@ class XiaomiCloudConnector:
             with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp:
                 tmp.write(response.content)
                 tmp_path: str = tmp.name
-            _LOGGER.info("Captcha image saved at: %s", tmp_path)
+            print_if_interactive(f"Captcha image saved at: {tmp_path}")
             try:
                 img = Image.open(tmp_path)
                 img.show()
@@ -287,8 +291,7 @@ class XiaomiCloudConnector:
             map(lambda i: chr(i), [random.randint(65, 69) for _ in range(13)])
         )
         random_text = "".join(map(lambda i: chr(i), [random.randint(97, 122) for _ in range(18)]))
-        return f"Android-7.1.1-{1}.{2}.{3}-ONEPLUS A3011-136-{agent_id} APP/xiaomi.smarthome APPV/62830"
-        # return f"{random_text}-{agent_id} APP/com.xiaomi.mihome APPV/10.5.201"
+        return f"{random_text}-{agent_id} APP/com.xiaomi.mihome APPV/10.5.201"
 
     @staticmethod
     def generate_device_id():
