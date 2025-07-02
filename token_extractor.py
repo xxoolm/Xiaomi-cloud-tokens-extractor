@@ -24,7 +24,7 @@ if sys.platform != "win32":
 SERVERS = ["cn", "de", "us", "ru", "tw", "sg", "in", "i2"]
 
 parser = argparse.ArgumentParser()
-parser.add_argument("-i", "--interactive", required=False, help="Interactive mode", action="store_true")
+parser.add_argument("-ni", "--non_interactive", required=False, help="Non-nteractive mode", action="store_true")
 parser.add_argument("-u", "--username", required=False, help="Username")
 parser.add_argument("-p", "--password", required=False, help="Password")
 parser.add_argument("-s", "--server", required=False, help="Server", choices=[*SERVERS, ""])
@@ -32,7 +32,7 @@ parser.add_argument("-l", "--log_level", required=False, help="Log level", defau
 parser.add_argument("-o", "--output", required=False, help="Output file")
 parser.add_argument("--host", required=False, help="Host")
 args = parser.parse_args()
-if not args.interactive and (not args.username or not args.password):
+if args.non_interactive and (not args.username or not args.password):
     parser.error("You need to specify username and password or run as interactive.")
 
 _LOGGER = logging.getLogger("token_extractor")
@@ -104,7 +104,7 @@ class XiaomiCloudConnector:
         if valid:
             json_resp: dict = self.to_json(response.text)
             if "captchaUrl" in json_resp and json_resp["captchaUrl"] is not None:
-                if not args.interactive:
+                if args.non_interactive:
                     parser.error("Captcha solution required, rerun in interactive mode")
                 captcha_code: str = self.handle_captcha(json_resp["captchaUrl"])
                 if not captcha_code:
@@ -287,7 +287,8 @@ class XiaomiCloudConnector:
             map(lambda i: chr(i), [random.randint(65, 69) for _ in range(13)])
         )
         random_text = "".join(map(lambda i: chr(i), [random.randint(97, 122) for _ in range(18)]))
-        return f"{random_text}-{agent_id} APP/com.xiaomi.mihome APPV/10.5.201"
+        return f"Android-7.1.1-{1}.{2}.{3}-ONEPLUS A3011-136-{agent_id} APP/xiaomi.smarthome APPV/62830"
+        # return f"{random_text}-{agent_id} APP/com.xiaomi.mihome APPV/10.5.201"
 
     @staticmethod
     def generate_device_id():
@@ -341,7 +342,7 @@ class XiaomiCloudConnector:
 
 
 def print_if_interactive(value="") -> None:
-    if args.interactive:
+    if not args.non_interactive:
         print(value)
 
 def print_tabbed(value, tab) -> None:
@@ -387,7 +388,7 @@ def main() -> None:
         password = getpass("")
     if args.server is not None:
         server = args.server
-    elif not args.interactive:
+    elif args.non_interactive:
         server = ""
     else:
         print_if_interactive(f"Server (one of: {servers_str}) Leave empty to check all available:")
@@ -463,7 +464,7 @@ def main() -> None:
     else:
         print_if_interactive("Unable to log in.")
 
-    if args.interactive:
+    if not args.non_interactive:
         print_if_interactive()
         print_if_interactive("Press ENTER to finish")
         input()
